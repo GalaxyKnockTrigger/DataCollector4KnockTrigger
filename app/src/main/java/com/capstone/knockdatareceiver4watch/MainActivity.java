@@ -1,18 +1,25 @@
 package com.capstone.knockdatareceiver4watch;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.media.AudioManager;
+import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
 import androidx.databinding.DataBindingUtil;
 
 import com.capstone.knockdatareceiver4watch.databinding.MainActivityBinding;
 
+import java.io.IOException;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.Timer;
@@ -21,17 +28,61 @@ import java.util.TimerTask;
 public class MainActivity extends Activity {
 
     private MainActivityBinding binding;
+
     private SensorManager sensorManager;
     private Sensor accSensor;
     private Sensor gyroSensor;
     private MySensorEventListener accEvent, gyroEvent;
 
+    private AudioManager audioManager;
+    private String audioName = null;
+    private MediaRecorder recorder;
+
     private final int TYPE_ACCEL = Sensor.TYPE_ACCELEROMETER;
     private final int TYPE_GYRO = Sensor.TYPE_GYROSCOPE_UNCALIBRATED;
+
+    private boolean permissionToUseAccepted = false;
+    private String [] permissions = {Manifest.permission.RECORD_AUDIO};
+    private static final int RCODE = 10000;
+
+    private void onRecord(boolean start){
+        if(start){
+            startRecording();
+        }else{
+            stopRecording();
+        }
+    }
+
+    private void startRecording() {
+        audioName = getExternalCacheDir().getAbsolutePath();
+        audioName += "/audiorecordtest.mpeg4";
+
+        recorder = new MediaRecorder();
+        recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        recorder.setOutputFile(audioName);
+        Log.i("AUDIO_INFO", "NAME: " + audioName);
+        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+        try {
+            recorder.prepare();
+        } catch (IOException e) {
+            Log.e("AUDIO_INFO", "prepare() failed");
+        }
+
+        recorder.start();
+    }
+
+    private void stopRecording() {
+        recorder.stop();
+        recorder.release();
+        recorder = null;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        ActivityCompat.requestPermissions(this, permissions, RCODE);
 
         sensorManager = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
         accSensor = sensorManager.getDefaultSensor(TYPE_ACCEL);
@@ -43,25 +94,26 @@ public class MainActivity extends Activity {
         accEvent = new MySensorEventListener(accSensor.getType());
         gyroEvent = new MySensorEventListener(gyroSensor.getType());
 
+        audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
+        Log.i("AUDIO_INFO", audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED));
+        // Record to the external cache directory for visibility
+
         binding = DataBindingUtil.setContentView(this, R.layout.activity_main);
 
         binding.setTime("");
         binding.setActivity(this);
-/*
-        if(checkSelfPermission(Manifest.permission.HIGH_SAMPLING_RATE_SENSORS) != PackageManager.PERMISSION_GRANTED){
-            requestPermissions(new String[]{Manifest.permission.HIGH_SAMPLING_RATE_SENSORS}, 1000);
-            ActivityResultLauncher<String> requestPermissionLauncher = registerFor;
-            requestPermissionLauncher.launch(
-                    Manifest.permission.REQUESTED_PERMISSION);
-        }*/
-
     }
 
-
-
     @Override
-    protected void onStart() {
-        super.onStart();
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        switch(requestCode){
+            case RCODE:
+                permissionToUseAccepted = (grantResults[0] == PackageManager.PERMISSION_GRANTED);
+                break;
+        }
+        if(!permissionToUseAccepted) finish();
     }
 
     private Integer time;
@@ -69,10 +121,12 @@ public class MainActivity extends Activity {
         time = 3;
 
         Thread getDataTh = new Thread(() -> {
+            onRecord(true);
             sensorManager.registerListener(accEvent, accSensor, accSensor.getMinDelay());
             sensorManager.registerListener(gyroEvent, gyroSensor, gyroSensor.getMinDelay());
             try {
                 Thread.sleep(1000);
+                onRecord(false);
                 sensorManager.unregisterListener(accEvent);
                 sensorManager.unregisterListener(gyroEvent);
 
@@ -99,8 +153,6 @@ public class MainActivity extends Activity {
             }
         };
         timer.scheduleAtFixedRate(tt, 0, 1000);
-
-
     }
 
     class MySensorEventListener implements SensorEventListener {
@@ -108,8 +160,8 @@ public class MainActivity extends Activity {
         private final int TYPE;
         private final String TAG;
 
-        private Queue<float[]> dataQueue;
-        private Queue<Long> timestamps;
+        private final Queue<float[]> dataQueue;
+        private final Queue<Long> timestamps;
 
         MySensorEventListener(int type) {
             TYPE = type;
