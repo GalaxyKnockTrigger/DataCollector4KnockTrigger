@@ -8,10 +8,13 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -25,8 +28,11 @@ import org.conscrypt.Conscrypt;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.FloatBuffer;
+import java.nio.ShortBuffer;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
@@ -38,6 +44,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Queue;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -74,52 +81,96 @@ public class MainActivity extends Activity {
     private Sensor gyroSensor;
     private MySensorEventListener accEvent, gyroEvent;
 
-    private AudioManager audioManager;
-    private String audioName = null;
-    private MediaRecorder recorder;
 
     private final int TYPE_ACCEL = Sensor.TYPE_ACCELEROMETER;
     private final int TYPE_GYRO = Sensor.TYPE_GYROSCOPE_UNCALIBRATED;
 
     private static final String URL = "https://nas.splo2t.com";
     private static final int PORT = 9999;
-
+    private OkHttpClient okHttpClient;
 
     private boolean permissionToUseAccepted = false;
-    private final String [] permissions = {Manifest.permission.RECORD_AUDIO};
+    private final String[] permissions = {Manifest.permission.RECORD_AUDIO};
     private static final int RCODE = 10000;
 
-    private void onRecord(boolean start){
-        if(start){
-            startRecording();
-        }else{
-            stopRecording();
-        }
-    }
+    private static final int RECEIVING_TIME = 1000;
 
-    private void startRecording() {
+    private Recorder recorder;
 
-        recorder = new MediaRecorder();
-        recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-        recorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
-        recorder.setOutputFile(audioName);
-        Log.i("AUDIO_INFO", "NAME: " + audioName);
-        Log.i("AUDIO_INFO", "SampleRate: " + audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE));
-        Log.i("AUDIO_INFO", "Buffer Size: " + audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER));
-        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
-        try {
-            recorder.prepare();
-        } catch (IOException e) {
-            Log.e("AUDIO_INFO", "prepare() failed");
+    class Recorder {
+        private AudioManager audioManager;
+        private AudioRecord recorder;
+        private final int SAMP_RATE = 48000;
+        private int bufferShortSize = SAMP_RATE * (RECEIVING_TIME/1000);
+        private short[] bufferRecord;
+        private int bufferRecordSize;
+        private ShortBuffer shortBuffer = ShortBuffer.allocate(SAMP_RATE);
+
+        public Recorder() {
+            audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            Log.i("AUDIO_INFO", audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED));
+            recorder = null;
         }
 
-        recorder.start();
-    }
+        public void onRecord(boolean start) {
+            if (start) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
 
-    private void stopRecording() {
-        recorder.stop();
-        recorder.release();
-        recorder = null;
+        private void startRecording() {
+            bufferRecordSize = AudioRecord.getMinBufferSize(SAMP_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT) * 2;
+            bufferRecord = new short[bufferRecordSize];
+
+            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            recorder = new AudioRecord(MediaRecorder.AudioSource.MIC,
+                    SAMP_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT, bufferRecord.length);
+
+            Log.i("AUDIO_INFO", "SampleRate: " + audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE));
+            Log.i("AUDIO_INFO", "Buffer Size: " + audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER));
+
+            recorder.startRecording();
+            shortBuffer.rewind();
+            while(shortBuffer.position()+bufferRecordSize<bufferShortSize){
+
+                shortBuffer.put(bufferRecord,0,recorder.read(bufferRecord,0,bufferRecordSize));
+            }
+        }
+
+        private void stopRecording() {
+            int Index=0;
+            shortBuffer.position(0);
+
+            recorder.stop();
+            recorder.release();
+            recorder = null;
+        }
+
+        private short[] getData(){
+            return shortBuffer.array();
+        }
+
+        public String getDataAsCSV(){
+            StringBuilder builder = new StringBuilder();
+            int i = 0;
+            for(short val : getData()){
+                builder.append(i).append(",").append(val).append("\n");
+                i++;
+                if(i >= SAMP_RATE)
+                    break;
+            }
+            shortBuffer.clear();
+            return builder.toString();
+        }
+
     }
 
     @Override
@@ -127,9 +178,6 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         ActivityCompat.requestPermissions(this, permissions, RCODE);
-
-        audioName = getExternalCacheDir().getAbsolutePath();
-        audioName += "/audiorecordtest.3gpp";
 
         sensorManager = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
         accSensor = sensorManager.getDefaultSensor(TYPE_ACCEL);
@@ -141,35 +189,32 @@ public class MainActivity extends Activity {
         accEvent = new MySensorEventListener(accSensor.getType());
         gyroEvent = new MySensorEventListener(gyroSensor.getType());
 
-        audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
-        Log.i("AUDIO_INFO", audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED));
+        recorder = new Recorder();
+
+        Security.insertProviderAt(Conscrypt.newProvider(), 1);
+        okHttpClient = TrustOkHttpClientUtil.getUnsafeOkHttpClient().build();
 
         Thread netTh = new Thread(() -> {
             try {
                 Log.i("NETWORK_TEST", "START");
-                ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                        .tlsVersions(TlsVersion.TLS_1_3)
-                        .cipherSuites(
-                                CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-                                CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-                                CipherSuite.TLS_DHE_RSA_WITH_AES_128_GCM_SHA256)
-                        .build();
-                Security.insertProviderAt(Conscrypt.newProvider(), 1);
-
+//                ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+//                        .tlsVersions(TlsVersion.TLS_1_3)
+//                        .cipherSuites(
+//                                CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+//                                CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+//                                CipherSuite.TLS_DHE_RSA_WITH_AES_128_GCM_SHA256)
+//                        .build();
 //                SelfSigningHelper helper = SelfSigningHelper.getInstance();
-
 //                OkHttpClient okHttpClient = helper.setSSLOkHttp(new OkHttpClient.Builder())
 //                        .connectionSpecs(Arrays.asList(spec))
 //                        .build();
-
-                OkHttpClient okHttpClient = TrustOkHttpClientUtil.getUnsafeOkHttpClient().build();
 
                 JSONObject jsonInput = new JSONObject();
                 jsonInput.put("id", "hi");
 
                 RequestBody rBody = RequestBody.create(
-                        MediaType.parse("application/json"),
-                        jsonInput.toString()
+                        jsonInput.toString(),
+                        MediaType.parse("application/json; charset=utf-8")
                 );
 
                 Log.i("NETWORK_TEST", "Request Build");
@@ -196,10 +241,9 @@ public class MainActivity extends Activity {
                                 } catch (JSONException e) {
                                     e.printStackTrace();
                                 }
-
+                                response.body().close();
                             }
                         });
-
             } catch (JSONException e) {
                 e.printStackTrace();
             }
@@ -233,19 +277,67 @@ public class MainActivity extends Activity {
         time = 3;
 
         Thread getDataTh = new Thread(() -> {
-            onRecord(true);
+            recorder.onRecord(true);
             sensorManager.registerListener(accEvent, accSensor, accSensor.getMinDelay());
             sensorManager.registerListener(gyroEvent, gyroSensor, gyroSensor.getMinDelay());
             try {
-                Thread.sleep(1000);
-                onRecord(false);
+                Thread.sleep(RECEIVING_TIME);
+                recorder.onRecord(false);
                 sensorManager.unregisterListener(accEvent);
                 sensorManager.unregisterListener(gyroEvent);
 
                 Log.i("ACC_INFO", String.format("%d_%d", accEvent.getDataSize()[0], accEvent.getDataSize()[1]));
                 Log.i("GYRO_INFO", String.format("%d_%d", gyroEvent.getDataSize()[0], gyroEvent.getDataSize()[1]));
 
-            } catch (InterruptedException e) {
+                JSONObject dataJson = new JSONObject();
+                dataJson.put("acc", accEvent.getDataAsCSV());
+                dataJson.put("gyro", gyroEvent.getDataAsCSV());
+                dataJson.put("sound", recorder.getDataAsCSV());
+
+//                RequestBody requestBody = new MultipartBody.Builder()
+//                        .setType(MultipartBody.FORM)
+////                        .addFormDataPart(
+////                                "image"
+////                                , audioName.substring(audioName.lastIndexOf("/"))
+////                                , RequestBody.create(
+////                                        new File(audioName)
+////                                        , MultipartBody.FORM
+////                                )
+////                        )
+//                        .addPart(RequestBody.create(
+//                                imuJson.toString()
+//                                ,MediaType.parse("application/json")
+//                                )
+//                        )
+//                        .build();
+                RequestBody requestBody = RequestBody.create(
+                        dataJson.toString(),
+                        MediaType.parse("application/json")
+                );
+
+                Request request = new Request.Builder()
+                        .post(requestBody)
+                        .url(URL + ":" + PORT)
+                        .build();
+
+                okHttpClient.newCall(request)
+                        .enqueue(new Callback() {
+                            @Override
+                            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                                Log.i("NETWORK_TEST", "Network Failed\n");
+                                e.printStackTrace();
+                            }
+
+                            @Override
+                            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                                Log.i("NETWORK_TEST", "File Transfer SUCCESS");
+                                response.body().close();
+                            }
+
+                        });
+
+
+            } catch (InterruptedException | JSONException e) {
                 e.printStackTrace();
             }
         });
@@ -307,6 +399,19 @@ public class MainActivity extends Activity {
 
         public int[] getDataSize(){
             return new int []{timestamps.size(), dataQueue.size()};
+        }
+        public String getDataAsCSV (){
+            StringBuilder ret = new StringBuilder("#timestamp, x, y, z\n");
+            long start = timestamps.peek();
+            while(!timestamps.isEmpty()){
+                ret.append(timestamps.poll() - start);
+
+                for(float val : dataQueue.poll()){
+                    ret.append(",").append(val);
+                }
+                ret.append("\n");
+            }
+            return ret.toString();
         }
     }
 
