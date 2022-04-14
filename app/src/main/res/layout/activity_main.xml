@@ -4,15 +4,12 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:padding="@dimen/box_inset_layout_padding"
-    tools:context=".MainActivity"
+    tools:context=".activity.MainActivity"
     tools:deviceIds="wear">
     <data class="MainActivityBinding">
         <variable
-            name="time"
-            type="String" />
-        <variable
             name="activity"
-            type="com.capstone.knockdatareceiver4watch.MainActivity" />
+            type="com.capstone.knockdatareceiver4watch.activity.MainActivity" />
     </data>
     <androidx.wear.widget.BoxInsetLayout
         android:layout_width="match_parent"
@@ -26,14 +23,32 @@
 
                 <Button
                     android:id="@+id/start_button"
-                    android:layout_width="100dp"
+                    android:layout_width="70dp"
                     android:layout_height="50dp"
                     app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/tv_timer"
+                    app:layout_constraintEnd_toStartOf="@id/tv_status"
+                    app:layout_constraintTop_toBottomOf="@id/et_label"
                     app:layout_constraintBottom_toTopOf="@id/check_is_fake"
+                    app:layout_constraintHorizontal_chainStyle="packed"
+                    android:layout_marginEnd="5dp"
                     android:text="Start"
                     android:onClick="@{() -> activity.onButtonClick()}"/>
+                <TextView
+                    android:id="@+id/tv_status"
+                    android:layout_width="30dp"
+                    android:layout_height="50dp"
+                    app:layout_constraintStart_toEndOf="@id/start_button"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="@id/start_button"
+                    app:layout_constraintBottom_toBottomOf="@id/start_button"
+                    android:layout_marginStart="5dp"
+                    app:layout_constraintHorizontal_chainStyle="packed"
+                    android:text="I"
+                    android:textSize="22sp"
+                    android:textAlignment="center"
+                    android:gravity="center"
+                    />
+
                 <CheckBox
                     android:id="@+id/check_is_fake"
                     android:layout_width="100dp"
@@ -46,15 +61,17 @@
                     android:text="Fake"
                     android:textAlignment="center"
                     />
-                <TextView
-                    android:id="@+id/tv_timer"
-                    android:layout_width="wrap_content"
+                <EditText
+                    android:id="@+id/et_label"
+                    android:layout_width="100dp"
                     android:layout_height="wrap_content"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent"
                     app:layout_constraintBottom_toTopOf="@id/start_button"
-                    android:text="@{time}"
+                    android:text=""
+                    android:hint="label"
+                    android:textAlignment="center"
                     android:textSize="20sp"
                     android:layout_margin="10dp"
                     />
