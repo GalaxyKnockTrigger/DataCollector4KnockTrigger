@@ -15,9 +15,12 @@ import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.databinding.DataBindingUtil;
 
+import com.capstone.knockdatareceiver4watch.KnockValidator;
 import com.capstone.knockdatareceiver4watch.R;
 import com.capstone.knockdatareceiver4watch.TrustOkHttpClientUtil;
 import com.capstone.knockdatareceiver4watch.databinding.MainActivityBinding;
+import com.capstone.knockdatareceiver4watch.listener.AccListener;
+import com.capstone.knockdatareceiver4watch.listener.GyroListener;
 import com.capstone.knockdatareceiver4watch.listener.IMUListener;
 import com.capstone.knockdatareceiver4watch.listener.IMUListenerFactory;
 import com.capstone.knockdatareceiver4watch.listener.AudioListener;
@@ -26,11 +29,16 @@ import org.conscrypt.Conscrypt;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.Security;
+import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 import okhttp3.Call;
@@ -80,52 +88,52 @@ public class MainActivity extends Activity {
         Security.insertProviderAt(Conscrypt.newProvider(), 1);
         okHttpClient = TrustOkHttpClientUtil.getUnsafeOkHttpClient().build();
 
-        Thread netTh = new Thread(() -> {
-            try {
-                Log.i("NETWORK_TEST", "START");
-//                SelfSigningHelper helper = SelfSigningHelper.getInstance();
-//                OkHttpClient okHttpClient = helper.setSSLOkHttp(new OkHttpClient.Builder())
-//                        .connectionSpecs(Arrays.asList(spec))
+//        Thread netTh = new Thread(() -> {
+//            try {
+//                Log.i("NETWORK_TEST", "START");
+////                SelfSigningHelper helper = SelfSigningHelper.getInstance();
+////                OkHttpClient okHttpClient = helper.setSSLOkHttp(new OkHttpClient.Builder())
+////                        .connectionSpecs(Arrays.asList(spec))
+////                        .build();
+//
+//                JSONObject jsonInput = new JSONObject();
+//                jsonInput.put("id", "hi");
+//
+//                RequestBody rBody = RequestBody.create(
+//                        jsonInput.toString(),
+//                        MediaType.parse("application/json; charset=utf-8")
+//                );
+//
+//                Log.i("NETWORK_TEST", "Request Build");
+//
+//                Request request = new Request.Builder()
+//                        .post(rBody)
+//                        .url(URL + ":" + PORT)
 //                        .build();
-
-                JSONObject jsonInput = new JSONObject();
-                jsonInput.put("id", "hi");
-
-                RequestBody rBody = RequestBody.create(
-                        jsonInput.toString(),
-                        MediaType.parse("application/json; charset=utf-8")
-                );
-
-                Log.i("NETWORK_TEST", "Request Build");
-
-                Request request = new Request.Builder()
-                        .post(rBody)
-                        .url(URL + ":" + PORT)
-                        .build();
-
-                Log.i("NETWORK_TEST", "Wait for response");
-
-                okHttpClient.newCall(request)
-                        .enqueue(new Callback() {
-                            @Override
-                            public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                                Log.i("NETWORK_TEST", "Network Failed\n");
-                                e.printStackTrace();
-                                Log.i("NETWORK_TEST", "CNT: "+okHttpClient.connectionPool().connectionCount());
-                                okHttpClient.connectionPool().evictAll();
-                            }
-
-                            @Override
-                            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                                response.body().close();
-                            }
-                        });
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        });
-
-        netTh.start();
+//
+//                Log.i("NETWORK_TEST", "Wait for response");
+//
+//                okHttpClient.newCall(request)
+//                        .enqueue(new Callback() {
+//                            @Override
+//                            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+//                                Log.i("NETWORK_TEST", "Network Failed\n");
+//                                e.printStackTrace();
+//                                Log.i("NETWORK_TEST", "CNT: "+okHttpClient.connectionPool().connectionCount());
+//                                okHttpClient.connectionPool().evictAll();
+//                            }
+//
+//                            @Override
+//                            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+//                                response.body().close();
+//                            }
+//                        });
+//            } catch (JSONException e) {
+//                e.printStackTrace();
+//            }
+//        });
+//
+//        netTh.start();
 
         binding = DataBindingUtil.setContentView(this, R.layout.activity_main);
         binding.tvStatus.setText("I");
@@ -174,23 +182,35 @@ public class MainActivity extends Activity {
                                 binding.tvStatus.setText("W")
                 );
 
-                short[] soundData = audioListener.getData();
-                Log.i("SOUND_INFO", String.format("%d", soundData.length));
+                // FFT TEST
+                ((AccListener) accListener).doFFT();
+
+                List<Short> soundData = audioListener.getData();
+                Log.i("SOUND_INFO", String.format("%d", soundData.size()));
                 Log.i("ACC_INFO", String.format("%d", accListener.getDataSize()));
                 Log.i("GYRO_INFO", String.format("%d", gyroListener.getDataSize()));
 
-                JSONObject dataJson = new JSONObject();
+                KnockValidator knockValidator = new KnockValidator(
+                        audioListener.getData()
+                        , ((AccListener) accListener).getData()
+                        , ((GyroListener)gyroListener).getData()
+                );
 
-                dataJson.put("label", binding.etLabel.getText());
-                if(!binding.checkIsFake.isChecked()) {
-                    dataJson.put("status", "real");
-                    dataJson.put("acc", accListener.getDataAsCSV());
-                    dataJson.put("gyro", gyroListener.getDataAsCSV());
-                }
-                else{
-                    dataJson.put("status", "fake");
-                }
-                dataJson.put("sound", audioListener.getDataAsCSV());
+                final boolean doNetwork = false;
+
+                if(doNetwork){
+                    JSONObject dataJson = new JSONObject();
+
+                    dataJson.put("label", binding.etLabel.getText());
+                    if(!binding.checkIsFake.isChecked()) {
+                        dataJson.put("status", "real");
+                        dataJson.put("acc", knockValidator.getAccAsCSV());
+                        dataJson.put("gyro", knockValidator.getGyroAsCSV());
+                    }
+                    else{
+                        dataJson.put("status", "fake");
+                    }
+                    dataJson.put("sound", knockValidator.getAudioAsCSV());
 //                Log.i("SOUND_DATA", dataJson.get("sound").toString().substring(0, 500));
 //                RequestBody requestBody = new MultipartBody.Builder()
 //                        .setType(MultipartBody.FORM)
@@ -208,63 +228,62 @@ public class MainActivity extends Activity {
 //                                )
 //                        )
 //                        .build();
-                RequestBody requestBody = RequestBody.create(
-                        compress(dataJson.toString() + "\n"),
-                        MediaType.parse("application/json; charset=utf-8")
-                );
+                    RequestBody requestBody = RequestBody.create(
+                            compress(dataJson.toString()),
+                            MediaType.parse("text; charset=utf-8")
+//                        MediaType.parse("application/json; charset=utf-8")
+                    );
 
 //                Iterator<String> keys = dataJson.keys();
 //                while(keys.hasNext()){
 //                    Log.i("NETWORK_TEST", "KEYS: " + keys.next());
 //                }
 
-                Request request = new Request.Builder()
-                        .post(requestBody)
-                        .url(URL + ":" + PORT)
-                        .build();
+                    Request request = new Request.Builder()
+                            .post(requestBody)
+                            .url(URL + ":" + PORT)
+                            .build();
 
-                long start = System.currentTimeMillis();
+//                long start = System.currentTimeMillis();
 
-                float i = 0;
-                while(i < 10000000){
-                    i += 1.0;
-                }
+//                float i = 0;
+//                while(i < 10000000){
+//                    i += 1.0;
+//                }
 
-                long end = System.currentTimeMillis();
+//                long end = System.currentTimeMillis();
 
-                Log.i("Latency_info", "computing latency: " + (end-start));
-
+//                Log.i("Latency_info", "computing latency: " + (end-start));
 //                Response response = okHttpClient.newCall(request).execute();
 //                end = System.currentTimeMillis();
 //                MainActivity.this.runOnUiThread(()->binding.tvStatus.setText("S"));
 
 
-                Call call = okHttpClient.newCall(request);
+                    Call call = okHttpClient.newCall(request);
 
-                final long cstart = System.currentTimeMillis();
-                call.enqueue(new Callback() {
-                    @Override
-                    public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                        Log.i("NETWORK_TEST", "Network Failed\n");
-                        MainActivity.this.runOnUiThread(()->binding.tvStatus.setText("F"));
+                    final long cstart = System.currentTimeMillis();
+                    call.enqueue(new Callback() {
+                        @Override
+                        public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                            Log.i("NETWORK_TEST", "Network Failed\n");
+                            MainActivity.this.runOnUiThread(()->binding.tvStatus.setText("F"));
 
-                        e.printStackTrace();
-                        Log.i("NETWORK_TEST", "CNT: "+okHttpClient.connectionPool().connectionCount());
-                        okHttpClient.connectionPool().evictAll();
-                    }
+                            e.printStackTrace();
+                            Log.i("NETWORK_TEST", "CNT: "+okHttpClient.connectionPool().connectionCount());
+                            okHttpClient.connectionPool().evictAll();
+                        }
 
-                    @Override
-                    public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                        Log.i("NETWORK_TEST", "File Transfer SUCCESS");
-                        MainActivity.this.runOnUiThread(()->binding.tvStatus.setText("S"));
+                        @Override
+                        public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                            Log.i("NETWORK_TEST", "File Transfer SUCCESS");
+                            MainActivity.this.runOnUiThread(()->binding.tvStatus.setText("S"));
 //                                Toast.makeText(MainActivity.this, "Success", Toast.LENGTH_SHORT).show();
-                        response.body().close();
-                        Log.i("Latency_info", "communication latency: " + (System.currentTimeMillis()-cstart));
-                    }
+                            response.body().close();
+                            Log.i("Latency_info", "communication latency: " + (System.currentTimeMillis()-cstart));
+                        }
 
-                });
-
-
+                    });
+                }
             } catch (InterruptedException | JSONException | IOException e) {
                 e.printStackTrace();
             }
@@ -294,24 +313,28 @@ public class MainActivity extends Activity {
         timer.scheduleAtFixedRate(tt, 0, 1000);
     }
 
-    private String compress(String str) throws IOException {
+    private byte[] compress(String str) throws IOException {
 
         if (str == null || str.length() == 0) {
-            return str;
+            return null;
         }
 
         long start = System.currentTimeMillis();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPOutputStream gzip = new GZIPOutputStream(out);
-        gzip.write(str.getBytes());
+        gzip.write(str.getBytes(StandardCharsets.UTF_8));
+        gzip.flush();
         gzip.close();
-        String outStr = out.toString("UTF-8");
+//        Log.i("COMPRESS_INFO_BEFORE", str);
+//        Log.i("COMPRESS_INFO_AFTER", out.toString());
+
+
         long end = System.currentTimeMillis();
 
-        Log.i("Latency_info", "compress latency: " + (end-start));
-        Log.i("Latency_info", "compress ratio: " + ((float)outStr.length() / (float)str.length()));
+//        Log.i("Latency_info", "compress latency: " + (end-start));
+//        Log.i("Latency_info", "compress ratio: " + (out.toByteArray().length / str.getBytes().length));
 
-        return outStr;
+        return out.toByteArray();
     }
 
 
