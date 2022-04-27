@@ -1,6 +1,9 @@
 package com.capstone.knockdatareceiver4watch;
 
+import static com.capstone.knockdatareceiver4watch.Constants.RECEIVING_TIME;
 import static com.capstone.knockdatareceiver4watch.Constants.TH_SOUND_PEAK;
+
+import android.util.Log;
 
 import java.util.List;
 import java.util.Optional;
@@ -34,6 +37,47 @@ public class KnockValidator {
         return getGyroData();
     }
 
+    public String getAudioAsCSV(){
+        StringBuilder builder = new StringBuilder();
+        for(short val : outputAudioData){
+            builder.append(val).append("\n");
+        }
+
+        String ret = builder.toString();
+
+        Log.i("AUDIO_RAW_VAL", ret);
+
+        outputAudioData.clear();
+        audioData.clear();
+        return ret;
+    }
+
+    public String getAccAsCSV (){
+        StringBuilder ret = new StringBuilder("#x, y, z\n");
+//            long start = timestamps.peek();
+        for(float[] values : outputAccData){
+//                ret.append(timestamps.poll() - start);
+            assert values != null;
+            ret.append(values[0]).append(',').append(values[1]).append(',').append(values[2]).append("\n");
+        }
+        Log.i("ACC_RAW_VAL", ret.toString());
+        outputAccData.clear();
+        accData.clear();
+        return ret.toString();
+    }
+    public String getGyroAsCSV (){
+        StringBuilder ret = new StringBuilder("#x, y, z\n");
+//            long start = timestamps.peek();
+        for(float[] values : outputGyroData){
+//                ret.append(timestamps.poll() - start);
+            assert values != null;
+            ret.append(values[0]).append(',').append(values[1]).append(',').append(values[2]).append("\n");
+        }
+        Log.i("GYRO_RAW_VAL", ret.toString());
+        outputGyroData.clear();
+        gyroData.clear();
+        return ret.toString();
+    }
     private void peakDetection(){
         for(int i = 0; i < audioData.size(); i++){
             if(audioData.get(i) > TH_SOUND_PEAK){
